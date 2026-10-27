@@ -41,4 +41,3 @@ def edit_selected_paragraph(typesetter, page, paragraph, *, before, after, fonts
     if result['status'] == 'fitted':
         paragraph.unicode = after
     return result
-

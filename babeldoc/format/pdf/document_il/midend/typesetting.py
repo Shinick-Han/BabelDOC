@@ -1251,6 +1251,68 @@ class Typesetting:
             ),
         )
 
+    def render_selected_paragraph_strict(self, paragraph, page, typesetting_units):
+        """Lay out an already-bound selection at original size, or report overflow.
+
+        This is a low-level IR operation, not a PDF editing entrypoint. The caller
+        owns source binding, style mapping, and transactional PDF output. No other
+        paragraph is visited and the document-wide scale calculation is never used.
+        """
+        original_box = paragraph.box
+        if original_box is None or not typesetting_units:
+            return {"status": "invalid", "reason": "missing-box-or-units"}
+        box = copy.deepcopy(original_box)
+        line_skip = 1.50 if self.is_cjk else 1.3
+        attempts = []
+        for expansion in ("original", "bottom", "right"):
+            if expansion == "bottom":
+                bottom = self.get_max_bottom_space(box, page) + 2
+                if bottom < box.y:
+                    box = Box(x=box.x, y=bottom, x2=box.x2, y2=box.y2)
+            elif expansion == "right":
+                right = self.get_max_right_space(box, page) - 5
+                if right > box.x2:
+                    box = Box(x=box.x, y=box.y, x2=right, y2=box.y2)
+            attempts.append({"x": box.x, "y": box.y, "x2": box.x2, "y2": box.y2})
+            units, fits = self._layout_typesetting_units(
+                typesetting_units, box, 1.0, line_skip, paragraph, True
+            )
+            # Upstream's fit flag alone does not check every glyph's bounds.
+            fits = fits and bool(units) and all(
+                u.box is not None and u.box.x >= box.x - 1e-6
+                and u.box.y >= box.y - 1e-6 and u.box.x2 <= box.x2 + 1e-6
+                and u.box.y2 <= box.y2 + 1e-6 for u in units
+            )
+            if not fits:
+                continue
+            # The upstream line breaker discards spaces at line starts. A
+            # selected edit must not silently claim exact content in that case.
+            expected = [u.try_get_unicode() for u in typesetting_units]
+            actual = [u.try_get_unicode() for u in units]
+            if expected != actual:
+                return {"status": "unsupported", "reason": "layout-dropped-units",
+                        "originalBox": attempts[0], "availableBox": attempts[-1]}
+            compositions, curves, forms = [], [], []
+            for unit in units:
+                chars, unit_curves, unit_forms = unit.render()
+                if unit.try_get_unicode() is not None and (
+                    len(chars) != 1 or not chars[0].pdf_character_id
+                ):
+                    return {"status": "unsupported", "reason": "missing-rendered-glyph",
+                            "originalBox": attempts[0], "availableBox": attempts[-1]}
+                compositions.extend(PdfParagraphComposition(pdf_character=c) for c in chars)
+                curves.extend(unit_curves)
+                forms.extend(unit_forms)
+            paragraph.box = box
+            paragraph.scale = 1.0
+            paragraph.pdf_paragraph_composition = compositions
+            page.pdf_curve.extend(curves)
+            page.pdf_form.extend(forms)
+            self._update_paragraph_render_order(paragraph)
+            return {"status": "fitted", "scale": 1.0, "box": attempts[-1]}
+        return {"status": "overflow", "scale": 1.0, "originalBox": attempts[0],
+                "availableBox": attempts[-1], "attempts": attempts}
+
     def render_paragraph(
         self,
         paragraph: il_version_1.PdfParagraph,

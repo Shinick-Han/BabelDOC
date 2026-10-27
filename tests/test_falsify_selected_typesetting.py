@@ -29,6 +29,12 @@ class StrictSelectionTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'layout-dropped-units')
         self.assertEqual(self.para.pdf_paragraph_composition, [self.old])
 
+    def test_missing_glyph_is_rejected_before_mutation(self):
+        result = self.ts.render_selected_paragraph_strict(self.para, self.page, self.units('A\u4e2d'))
+        self.assertEqual(result['status'], 'unsupported')
+        self.assertEqual(result['reason'], 'missing-rendered-glyph')
+        self.assertEqual(self.para.pdf_paragraph_composition, [self.old])
+
     def test_expansion_requires_all_ink_check(self):
         self.para.box = Box(x=10, y=70, x2=110, y2=90)
         original = self.para.box

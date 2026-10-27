@@ -117,3 +117,69 @@ def edit_native_single_character(page, paragraph, *, before, after, expected_box
     paragraph.pdf_paragraph_composition = staged
     paragraph.unicode = after
     return {"status": "edited", "scale": 1.0, "advanceDifferenceEm": difference}
+
+
+def edit_native_same_length(page, paragraph, *, before, after, expected_box,
+                                 max_advance_difference_em=0.02):
+    """Replace non-space characters using observed glyphs at original geometry.
+
+    Only equal-length substitutions are supported. The renderer and caller must
+    still verify source hash, PDF text, and unaffected paint.
+    """
+    if not any(p is paragraph for p in page.pdf_paragraph) or paragraph.box is None:
+        return {"status": "invalid", "reason": "paragraph-not-on-page"}
+    box = paragraph.box
+    if tuple(expected_box) != (box.x, box.y, box.x2, box.y2) or paragraph.unicode != before:
+        return {"status": "invalid", "reason": "source-binding-mismatch"}
+    if len(before) != len(after):
+        return {"status": "unsupported", "reason": "length-changed"}
+    changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    if not changed or any(before[i].isspace() or after[i].isspace() for i in changed):
+        return {"status": "unsupported", "reason": "not-nonspace-substitutions"}
+    staged = copy.deepcopy(paragraph.pdf_paragraph_composition)
+    chars = []
+    for comp in staged:
+        if comp.pdf_formula or comp.pdf_same_style_unicode_characters:
+            return {"status": "unsupported", "reason": "formula-or-existing-unicode"}
+        group = ([comp.pdf_character] if comp.pdf_character else
+                 comp.pdf_line.pdf_character if comp.pdf_line else
+                 comp.pdf_same_style_characters.pdf_character if comp.pdf_same_style_characters else [])
+        if not group:
+            return {"status": "unsupported", "reason": "unknown-composition"}
+        chars.extend(group)
+    nonspace_chars = [c for c in chars if c.char_unicode and not c.char_unicode.isspace()]
+    logical = ''.join(c.char_unicode for c in nonspace_chars)
+    if logical != ''.join(c for c in before if not c.isspace()):
+        return {"status": "unsupported", "reason": "source-character-alignment"}
+    replacements = []
+    for changed_index in changed:
+        index = sum(not c.isspace() for c in before[:changed_index])
+        target = None
+        for c in nonspace_chars:
+            if index < len(c.char_unicode):
+                target = c
+                break
+            index -= len(c.char_unicode)
+        if target is None or len(target.char_unicode) != 1:
+            return {"status": "unsupported", "reason": "selected-ligature"}
+        if target.advance is None or target.pdf_style is None or target.box is None:
+            return {"status": "unsupported", "reason": "source-glyph-metrics"}
+        candidates = [c for c in chars if c.char_unicode == after[changed_index]
+                      and c.pdf_style == target.pdf_style and c.advance is not None
+                      and c.pdf_character_id is not None and c.xobj_id == target.xobj_id]
+        if not candidates:
+            return {"status": "unsupported", "reason": "unobserved-native-glyph"}
+        donor = min(candidates, key=lambda c: abs(c.advance - target.advance))
+        difference = abs(donor.advance - target.advance)
+        if difference > max_advance_difference_em:
+            return {"status": "overflow", "reason": "glyph-advance-mismatch",
+                    "box": {"x": box.x, "y": box.y, "x2": box.x2, "y2": box.y2},
+                    "advanceDifferenceEm": difference}
+        replacements.append((target, donor.pdf_character_id, donor.char_unicode, donor.advance, difference))
+    for target, code, unicode, advance, _ in replacements:
+        target.pdf_character_id = code
+        target.char_unicode = unicode
+        target.advance = advance
+    paragraph.pdf_paragraph_composition = staged
+    paragraph.unicode = after
+    return {"status": "edited", "scale": 1.0, "advanceDifferenceEm": max(r[4] for r in replacements)}

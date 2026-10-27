@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pymupdf
 from babeldoc.format.pdf.document_il import Box, PdfStyle, PdfParagraph, PdfCharacter, PdfParagraphComposition
 from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting, TypesettingUnit
-from babeldoc.format.pdf.document_il.midend.selected_paragraph_edit import edit_selected_paragraph, edit_native_single_character
+from babeldoc.format.pdf.document_il.midend.selected_paragraph_edit import edit_selected_paragraph, edit_native_single_character, edit_native_same_length
 
 class StrictSelectionTests(unittest.TestCase):
     def setUp(self):
@@ -65,6 +65,17 @@ class StrictSelectionTests(unittest.TestCase):
         result = edit_native_single_character(self.page,self.para,before='fiab',after='fibb',expected_box=(10,50,110,90))
         self.assertEqual(result['status'],'edited')
         self.assertEqual(self.para.pdf_paragraph_composition[0].pdf_character,lig)
+
+    def test_multiple_native_replacements_are_atomic(self):
+        chars=[PdfCharacter(char_unicode=c,pdf_character_id=ord(c),advance=.5,pdf_style=self.style,xobj_id=0,box=Box(x=10+i*6,y=80,x2=15+i*6,y2=90)) for i,c in enumerate('abca')]
+        self.para.unicode='abca'
+        self.para.pdf_paragraph_composition=[PdfParagraphComposition(pdf_character=c) for c in chars]
+        result=edit_native_same_length(self.page,self.para,before='abca',after='bcza',expected_box=(10,50,110,90))
+        self.assertEqual(result['reason'],'unobserved-native-glyph')
+        self.assertEqual(self.para.unicode,'abca')
+        result=edit_native_same_length(self.page,self.para,before='abca',after='bcaa',expected_box=(10,50,110,90))
+        self.assertEqual(result['status'],'edited')
+        self.assertEqual(''.join(c.pdf_character.char_unicode for c in self.para.pdf_paragraph_composition),'bcaa')
 
     def test_native_single_character_rejects_unobserved_glyph(self):
         a = PdfCharacter(char_unicode='a', pdf_character_id=7, advance=.5, pdf_style=self.style, xobj_id=0, box=Box(x=10,y=80,x2=15,y2=90))

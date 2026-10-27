@@ -12,7 +12,7 @@ class StrictSelectionTests(unittest.TestCase):
         self.ts = Typesetting.__new__(Typesetting)
         self.ts.is_cjk = False
         self.ts.font_mapper = SimpleNamespace(base_font=self.font, map=lambda font, char: self.font)
-        self.old = PdfParagraphComposition(pdf_character=PdfCharacter(char_unicode='old', pdf_style=self.style))
+        self.old = PdfParagraphComposition(pdf_character=PdfCharacter(char_unicode='old', pdf_style=self.style, box=Box(x=10,y=80,x2=20,y2=90)))
         self.para = PdfParagraph(box=Box(x=10,y=50,x2=110,y2=90), pdf_paragraph_composition=[self.old], pdf_style=self.style, unicode='old', xobj_id=-1)
         self.page = SimpleNamespace(cropbox=SimpleNamespace(box=Box(x=0,y=0,x2=120,y2=120)), pdf_paragraph=[self.para], pdf_character=[], pdf_figure=[], pdf_curve=[], pdf_form=[])
     def units(self, text):
@@ -34,6 +34,13 @@ class StrictSelectionTests(unittest.TestCase):
         self.assertEqual(result['status'], 'fitted')
         self.assertEqual(self.para.unicode, args['after'])
         self.assertEqual({c.pdf_character.pdf_style.font_size for c in self.para.pdf_paragraph_composition}, {10})
+
+    def test_hook_rejects_implicit_source_spacing(self):
+        first = PdfCharacter(char_unicode='a', pdf_style=self.style, box=Box(x=10,y=80,x2=15,y2=90))
+        second = PdfCharacter(char_unicode='b', pdf_style=self.style, box=Box(x=17,y=80,x2=22,y2=90))
+        self.para.pdf_paragraph_composition = [PdfParagraphComposition(pdf_character=first), PdfParagraphComposition(pdf_character=second)]
+        result = edit_selected_paragraph(self.ts, self.page, self.para, before='old', after='ab', fonts={'base': object()}, expected_box=(10, 50, 110, 90))
+        self.assertEqual(result['reason'], 'implicit-source-spacing')
 
     def test_dropped_leading_space_is_rejected(self):
         result = self.ts.render_selected_paragraph_strict(self.para, self.page, self.units(' leading'))

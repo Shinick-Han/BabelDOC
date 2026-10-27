@@ -29,6 +29,15 @@ class StrictSelectionTests(unittest.TestCase):
         self.assertEqual(result['reason'], 'layout-dropped-units')
         self.assertEqual(self.para.pdf_paragraph_composition, [self.old])
 
+    def test_expansion_requires_all_ink_check(self):
+        self.para.box = Box(x=10, y=70, x2=110, y2=90)
+        original = self.para.box
+        result = self.ts.render_selected_paragraph_strict(
+            self.para, self.page, self.units('One two three four five six seven eight nine ten'))
+        self.assertEqual(result['reason'], 'expansion-unverified')
+        self.assertIs(self.para.box, original)
+        self.assertEqual(self.para.pdf_paragraph_composition, [self.old])
+
     def test_overflow_does_not_mutate_selection(self):
         original_box = self.para.box
         result = self.ts.render_selected_paragraph_strict(self.para,self.page,self.units('long text ' * 150))

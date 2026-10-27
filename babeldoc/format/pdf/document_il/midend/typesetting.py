@@ -1251,12 +1251,16 @@ class Typesetting:
             ),
         )
 
-    def render_selected_paragraph_strict(self, paragraph, page, typesetting_units):
+    def render_selected_paragraph_strict(
+        self, paragraph, page, typesetting_units, expansion_is_clear=None
+    ):
         """Lay out an already-bound selection at original size, or report overflow.
 
         This is a low-level IR operation, not a PDF editing entrypoint. The caller
         owns source binding, style mapping, and transactional PDF output. No other
         paragraph is visited and the document-wide scale calculation is never used.
+        Expansion requires a caller-provided check of all native page ink; the
+        upstream obstacle helpers alone do not cover every PDF graphics object.
         """
         original_box = paragraph.box
         if original_box is None or not typesetting_units:
@@ -1287,6 +1291,12 @@ class Typesetting:
                 continue
             # The upstream line breaker discards spaces at line starts. A
             # selected edit must not silently claim exact content in that case.
+            if expansion != "original" and (
+                expansion_is_clear is None or not expansion_is_clear(original_box, box)
+            ):
+                return {"status": "overflow", "reason": "expansion-unverified",
+                        "originalBox": attempts[0], "availableBox": attempts[-1],
+                        "attempts": attempts, "scale": 1.0}
             expected = [u.try_get_unicode() for u in typesetting_units]
             actual = [u.try_get_unicode() for u in units]
             if expected != actual:
@@ -1303,12 +1313,14 @@ class Typesetting:
                 compositions.extend(PdfParagraphComposition(pdf_character=c) for c in chars)
                 curves.extend(unit_curves)
                 forms.extend(unit_forms)
+            staged = copy.copy(paragraph)
+            staged.pdf_paragraph_composition = compositions
+            self._update_paragraph_render_order(staged)
             paragraph.box = box
             paragraph.scale = 1.0
             paragraph.pdf_paragraph_composition = compositions
             page.pdf_curve.extend(curves)
             page.pdf_form.extend(forms)
-            self._update_paragraph_render_order(paragraph)
             return {"status": "fitted", "scale": 1.0, "box": attempts[-1]}
         return {"status": "overflow", "scale": 1.0, "originalBox": attempts[0],
                 "availableBox": attempts[-1], "attempts": attempts}
